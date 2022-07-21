@@ -1,0 +1,3 @@
+[submodule "lib/NMEA2000_mcp"]
+	path = lib/NMEA2000_mcp
+	url = git@github.com:ttlappalainen/NMEA2000_mcp.git
