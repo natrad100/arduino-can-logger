@@ -1,38 +1,16 @@
-/*
- created 24 Nov 2010
- modified 9 Apr 2012
- by Tom Igoe
-
- modified 18 Sep 2014
- by Bobby Chan @ SparkFun Electronics Inc.
-
- Modified by Toni Klopfenstein @ SparkFun Electronics
-  September 2015
-  https://github.com/sparkfun/CAN-Bus_Shield
-
- SD Card Datalogger
-
- This example is based off an example code from Arduino's site
- http://arduino.cc/en/Tutorial/Datalogger and it shows how to
- log data from three analog sensors with a timestamp based on when
- the Arduino began running the current program to an SD card using
- the SD library https://github.com/greiman/SdFat by William
- Greiman. This example code also includes an output to the
- Serial Monitor for debugging.
-
- The circuit:
- * analog sensors on analog pins 0, 1, and 2
- * SD card attached to SPI bus as follows:
- ** MOSI - pin 11
- ** MISO - pin 12
- ** CLK - pin 13
- ** CS - pin 4
-
- This example code is in the public domain.
- */
-
 #include <SPI.h>
 #include <SD.h>
+#include <SPI.h>
+#include "mcp2515_can.h"
+
+const int SPI_CS_PIN = 9;
+const int CAN_INT_PIN = 2;
+mcp2515_can CAN(SPI_CS_PIN); // Set CS pin
+
+unsigned char flagRecv = 0;
+unsigned char len = 0;
+unsigned char buf[8];
+char str[20];
 
 const int RECORDING_BUTTON = 3;
 const int POWER_INDICATOR = 5;
@@ -40,6 +18,7 @@ const int RECORDING_INDICATOR = 6;
 
 void create_header(File *datafile_ptr);
 void handleButtonPressInterrupt();
+void handleCanbusInterrupt();
 
 // On the Ethernet Shield, CS is pin 4. Note that even if it's not
 // used as the CS pin, the hardware CS pin (10 on most Arduino boards,
@@ -79,6 +58,15 @@ void setup()
     return;
   }
   Serial.println("card initialized.");
+
+  // CAN
+  attachInterrupt(digitalPinToInterrupt(CAN_INT_PIN), handleCanbusInterrupt, FALLING); // start interrupt
+  while (CAN_OK != CAN.begin(CAN_250KBPS))
+  { // init can bus : baudrate = 500k
+    SERIAL_PORT_MONITOR.println("CAN init fail, retry...");
+    delay(100);
+  }
+  SERIAL_PORT_MONITOR.println("CAN init ok!");
   Serial.println("Ready to record");
 }
 
@@ -94,21 +82,28 @@ void loop()
     Serial.println(String("Opening file " + filename));
 
     File dataFile = SD.open(filename.c_str(), FILE_WRITE);
-    if (dataFile)
+    if (dataFile && flagRecv)
     {
+      flagRecv = 0;
       create_header(&dataFile);
 
-      // while(dataFile){
-      int i = 0;
-      while (i < 100 && recording_button_state)
+      while (CAN_MSGAVAIL == CAN.checkReceive())
       {
-        dataFile.print(millis());
-        dataFile.print(", test\n");
-        i++;
+        // int i = 0;
+        // while (i < 100 && recording_button_state)
+        {
+          CAN.readMsgBuf(&len, buf);
+          dataFile.print(millis());
+          dataFile.print(",");
+          for (int x = 0; x < len; x++)
+          {
+            dataFile.print(buf[x]);
+          }
+          dataFile.print("\n");
+        }
+        Serial.println(String("Closing File " + filename));
+        dataFile.close();
       }
-      Serial.println(String("Closing File " + filename));
-      dataFile.close();
-      ix++;
     }
     // if the file isn't open, pop up an error:
     else
@@ -117,7 +112,6 @@ void loop()
     }
   }
 }
-
 void create_header(File *datafile_ptr)
 {
   String header_cols[2] = {"timestamp", "data"};
@@ -149,4 +143,9 @@ void handleButtonPressInterrupt()
     recording_button_state = !recording_button_state;
     Serial.println("Record Stop/Start Triggered");
   }
+}
+
+void handleCanbusInterrupt()
+{
+  flagRecv = 1;
 }
